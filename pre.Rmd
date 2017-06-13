@@ -1,0 +1,92 @@
+---
+title: "Coursera ML assignment"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(caret)
+set.seed(7)
+```
+
+### Data transformations
+
+We load the data
+
+```{r}
+testingraw <- read.csv("pml-testing.csv")
+trainingraw <- read.csv("pml-training.csv")
+```
+
+
+- We remove the first 6 columns (ids, timestamps, usernames that should not be used to predict in this model...) and transform some columns which were mistakenly imported as factor instead of numeric
+- We remove columns that have missing values. This is a bit drastic, we could have removed only columns with number of missing values over a certain threshold or have imputed missing values. However the model proved to work well despite this simplification
+- Split into training/validation sets. Also we only use part of the data for training here as it took too long to run
+```{r}
+testing <- testingraw
+training <- trainingraw
+testing<-testing[,7:160]
+training<-training[,7:160]
+
+training <- training[sample(nrow(training)),]
+classes <- training$classe
+w <- which( sapply( training, class ) == 'factor' )
+suppressWarnings(training[w] <- lapply( training[w], function(x) as.numeric(as.character(x)) ))
+suppressWarnings(testing[w] <- lapply( testing[w], function(x) as.numeric(as.character(x)) ))
+
+training <- training[,(colSums(is.na(training)) == 0)]
+testing <- testing[,(colSums(is.na(testing)) == 0)]
+
+training$classe <- classes
+
+training1 <- training[1:5000,]
+crossvalid <- training[5001:7000,]
+```
+
+We still have over 50 variables and there are only so many times you can go and get coffee while R is training, so we'll reduce the complexity a bit by performing PCA preprocessing. We set the threshold to keep 97% of the variance. The original predictors have quite a bit of correlation so this processing roughly halves the number of dimensions in the dataset for us.
+
+```{r}
+training2 <- training1
+training2$classe <- NULL
+p <- preProcess(training2, method="pca", thresh=0.97)
+tpc <- predict(p, training2)
+tpc$classe <- training1$classe
+
+```
+
+
+### Fitting the model
+
+Since the predictors are numerical a logistic regression may also have worked. "Tree ensemble" techniques like Random Forest don't make any assumption about linearity as logistic regression does which is an advantage in many cases. Empirically Random Forest and Gradient Boosting work well for this kind of classification problem. Here we choose Random Forest.
+
+```{r}
+model<-train(classe~.,data=tpc,method="rf",
+                trControl=trainControl(method="cv",number=4),
+                prox=TRUE,allowParallel=TRUE)
+```
+
+
+### Cross-validation
+
+We apply PCA on the cross-validation set we did set apart previously (n=2000), apply the prediction and print the confusion matrix. The results speak by themselves, we achieve an accuracy close to 95%. Hard to believe this is real data!
+
+```{r}
+crossvalid2 <- crossvalid
+crossvalid2$classe <- NULL
+crossvalidpc <- predict(p, crossvalid2)
+crossvalidoutput <- predict(model, crossvalidpc)
+confusionm <- confusionMatrix(crossvalid$classe, crossvalidoutput)
+confusionm
+
+```
+
+### Final prediction
+
+We need to apply PCA to the test set and then we can just get the prediction from the fitted model on the final test set.
+```{r}
+
+testpc <- predict(p, testing)
+o <- predict(model, testpc)
+o
+```
